@@ -1,0 +1,219 @@
+import React, { useMemo, useRef, useState } from "react";
+
+export default function CropBoxCoordinateApp() { const [imageSrc, setImageSrc] = useState(null); const [imageName, setImageName] = useState(""); const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 }); const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 }); const [boxes, setBoxes] = useState([]); const [selectedId, setSelectedId] = useState(null); const [mode, setMode] = useState("draw"); const [dragState, setDragState] = useState(null); const [copied, setCopied] = useState(false);
+
+const stageRef = useRef(null); const imgRef = useRef(null); const idRef = useRef(1);
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const fmt = (n, d = 4) => Number(n || 0).toFixed(d);
+
+const toImageCoords = (clientX, clientY) => { const rect = stageRef.current?.getBoundingClientRect(); if (!rect || !displaySize.width || !displaySize.height) return null;
+
+const x = clamp(clientX - rect.left, 0, displaySize.width);
+const y = clamp(clientY - rect.top, 0, displaySize.height);
+return { x, y };
+
+};
+
+const normalizeBox = (x1, y1, x2, y2) => { const left = Math.min(x1, x2); const top = Math.min(y1, y2); const right = Math.max(x1, x2); const bottom = Math.max(y1, y2); return { x: left, y: top, width: right - left, height: bottom - top, }; };
+
+const onFileChange = (e) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { setImageSrc(reader.result); setImageName(file.name); setBoxes([]); setSelectedId(null); setDragState(null); }; reader.readAsDataURL(file); };
+
+const onImageLoad = (e) => { const img = e.currentTarget; setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight }); setDisplaySize({ width: img.clientWidth, height: img.clientHeight }); };
+
+const refreshDisplaySize = () => { const img = imgRef.current; if (!img) return; setDisplaySize({ width: img.clientWidth, height: img.clientHeight }); };
+
+const minBoxSize = 4;
+
+const startDraw = (point) => { const id = idRef.current++; const newBox = { id, x: point.x, y: point.y, width: 0, height: 0, label: box_${id} }; setBoxes((prev) => [...prev, newBox]); setSelectedId(id); setDragState({ type: "drawing", id, startX: point.x, startY: point.y }); };
+
+const startMove = (boxId, point) => { const box = boxes.find((b) => b.id === boxId); if (!box) return; setSelectedId(boxId); setDragState({ type: "moving", id: boxId, offsetX: point.x - box.x, offsetY: point.y - box.y, }); };
+
+const startResize = (boxId, handle, point) => { const box = boxes.find((b) => b.id === boxId); if (!box) return; setSelectedId(boxId); setDragState({ type: "resizing", id: boxId, handle, startPointer: point, startBox: { ...box }, }); };
+
+const updateDrawing = (point) => { setBoxes((prev) => prev.map((b) => { if (b.id !== dragState.id) return b; return { ...b, ...normalizeBox(dragState.startX, dragState.startY, point.x, point.y) }; }) ); };
+
+const updateMoving = (point) => { setBoxes((prev) => prev.map((b) => { if (b.id !== dragState.id) return b; const x = clamp(point.x - dragState.offsetX, 0, displaySize.width - b.width); const y = clamp(point.y - dragState.offsetY, 0, displaySize.height - b.height); return { ...b, x, y }; }) ); };
+
+const updateResizing = (point) => { setBoxes((prev) => prev.map((b) => { if (b.id !== dragState.id) return b; const sb = dragState.startBox; let left = sb.x; let top = sb.y; let right = sb.x + sb.width; let bottom = sb.y + sb.height;
+
+if (dragState.handle.includes("w")) left = clamp(point.x, 0, right - minBoxSize);
+    if (dragState.handle.includes("e")) right = clamp(point.x, left + minBoxSize, displaySize.width);
+    if (dragState.handle.includes("n")) top = clamp(point.y, 0, bottom - minBoxSize);
+    if (dragState.handle.includes("s")) bottom = clamp(point.y, top + minBoxSize, displaySize.height);
+
+    return { x: left, y: top, width: right - left, height: bottom - top, id: b.id, label: b.label };
+  })
+);
+
+};
+
+const finishPointer = () => { if (dragState?.type === "drawing") { setBoxes((prev) => prev.filter((b) => !(b.id === dragState.id && (b.width < minBoxSize || b.height < minBoxSize)))); } setDragState(null); };
+
+const onStagePointerDown = (e) => { if (!imageSrc) return; if (e.target.dataset.role === "box" || e.target.dataset.role === "handle") return; const point = toImageCoords(e.clientX, e.clientY); if (!point) return; if (mode === "draw") startDraw(point); else setSelectedId(null); };
+
+const onPointerMove = (e) => { if (!dragState) return; const point = toImageCoords(e.clientX, e.clientY); if (!point) return; if (dragState.type === "drawing") updateDrawing(point); if (dragState.type === "moving") updateMoving(point); if (dragState.type === "resizing") updateResizing(point); };
+
+const deleteSelected = () => { if (selectedId == null) return; setBoxes((prev) => prev.filter((b) => b.id !== selectedId)); setSelectedId(null); };
+
+const clearAll = () => { setBoxes([]); setSelectedId(null); };
+
+const updateLabel = (id, label) => { setBoxes((prev) => prev.map((b) => (b.id === id ? { ...b, label } : b))); };
+
+const scaleX = naturalSize.width / (displaySize.width || 1); const scaleY = naturalSize.height / (displaySize.height || 1);
+
+const exportData = useMemo(() => { const payload = boxes.map((b) => { const x = b.x * scaleX; const y = b.y * scaleY; const width = b.width * scaleX; const height = b.height * scaleY; const x2 = x + width; const y2 = y + height; return { id: b.id, label: b.label, pixels: { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height), x2: Math.round(x2), y2: Math.round(y2), }, normalized: { x: Number((x / naturalSize.width || 0).toFixed(6)), y: Number((y / naturalSize.height || 0).toFixed(6)), width: Number((width / naturalSize.width || 0).toFixed(6)), height: Number((height / naturalSize.height || 0).toFixed(6)), x2: Number((x2 / naturalSize.width || 0).toFixed(6)), y2: Number((y2 / naturalSize.height || 0).toFixed(6)), }, thousandths: { x: Math.round((x / naturalSize.width || 0) * 1000), y: Math.round((y / naturalSize.height || 0) * 1000), width: Math.round((width / naturalSize.width || 0) * 1000), height: Math.round((height / naturalSize.height || 0) * 1000), x2: Math.round((x2 / naturalSize.width || 0) * 1000), y2: Math.round((y2 / naturalSize.height || 0) * 1000), }, cssLike: [ Number((x / naturalSize.width || 0).toFixed(6)), Number((y / naturalSize.height || 0).toFixed(6)), Number((x2 / naturalSize.width || 0).toFixed(6)), Number((y2 / naturalSize.height || 0).toFixed(6)), ], }; });
+
+return JSON.stringify(
+  {
+    image: {
+      name: imageName,
+      naturalWidth: naturalSize.width,
+      naturalHeight: naturalSize.height,
+    },
+    boxes: payload,
+  },
+  null,
+  2
+);
+
+}, [boxes, scaleX, scaleY, naturalSize.width, naturalSize.height, imageName]);
+
+const copyExport = async () => { try { await navigator.clipboard.writeText(exportData); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { setCopied(false); } };
+
+const selectedBox = boxes.find((b) => b.id === selectedId) || null;
+
+const handleStyle = { position: "absolute", width: 10, height: 10, background: "white", border: "2px solid black", borderRadius: 999, transform: "translate(-50%, -50%)", };
+
+const renderHandles = (box) => { const pts = [ ["nw", box.x, box.y, "nwse-resize"], ["n", box.x + box.width / 2, box.y, "ns-resize"], ["ne", box.x + box.width, box.y, "nesw-resize"], ["e", box.x + box.width, box.y + box.height / 2, "ew-resize"], ["se", box.x + box.width, box.y + box.height, "nwse-resize"], ["s", box.x + box.width / 2, box.y + box.height, "ns-resize"], ["sw", box.x, box.y + box.height, "nesw-resize"], ["w", box.x, box.y + box.height / 2, "ew-resize"], ]; return pts.map(([name, left, top, cursor]) => ( <div key={name} data-role="handle" onPointerDown={(e) => { e.stopPropagation(); const point = toImageCoords(e.clientX, e.clientY); if (!point) return; startResize(box.id, name, point); }} style={{ ...handleStyle, left, top, cursor }} /> )); };
+
+return ( <div className="min-h-screen bg-neutral-100 text-neutral-900 p-4 md:p-6"> <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6"> <div className="bg-white rounded-3xl shadow-sm p-4 md:p-5"> <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4"> <div> <h1 className="text-2xl font-bold">Crop Box Coordinate Tool</h1> <p className="text-sm text-neutral-600 mt-1"> Upload an image, draw boxes, then copy coordinates for code. </p> </div> <div className="flex flex-wrap gap-2"> <label className="px-4 py-2 rounded-2xl bg-black text-white cursor-pointer"> Upload Image <input type="file" accept="image/*" className="hidden" onChange={onFileChange} /> </label> <button onClick={() => setMode(mode === "draw" ? "select" : "draw")} className="px-4 py-2 rounded-2xl border" > Mode: {mode === "draw" ? "Draw" : "Select"} </button> <button onClick={deleteSelected} className="px-4 py-2 rounded-2xl border" disabled={!selectedBox}> Delete Selected </button> <button onClick={clearAll} className="px-4 py-2 rounded-2xl border" disabled={!boxes.length}> Clear All </button> </div> </div>
+
+<div className="mb-3 text-sm text-neutral-600 flex flex-wrap gap-x-5 gap-y-1">
+        <span><strong>Image:</strong> {imageName || "None loaded"}</span>
+        <span><strong>Natural:</strong> {naturalSize.width || 0} × {naturalSize.height || 0}</span>
+        <span><strong>Boxes:</strong> {boxes.length}</span>
+      </div>
+
+      <div className="rounded-3xl border bg-neutral-50 p-3 overflow-auto">
+        {!imageSrc ? (
+          <div className="h-[60vh] min-h-[320px] flex items-center justify-center text-neutral-500 text-center px-6">
+            Upload an image to begin.
+          </div>
+        ) : (
+          <div
+            ref={stageRef}
+            className="relative inline-block select-none touch-none max-w-full"
+            onPointerDown={onStagePointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={finishPointer}
+            onPointerLeave={finishPointer}
+            onPointerCancel={finishPointer}
+          >
+            <img
+              ref={imgRef}
+              src={imageSrc}
+              alt="Uploaded"
+              onLoad={onImageLoad}
+              onResize={refreshDisplaySize}
+              className="max-w-full h-auto rounded-2xl block"
+            />
+
+            <div className="absolute inset-0">
+              {boxes.map((box) => {
+                const isSelected = selectedId === box.id;
+                return (
+                  <div
+                    key={box.id}
+                    data-role="box"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      const point = toImageCoords(e.clientX, e.clientY);
+                      if (!point) return;
+                      startMove(box.id, point);
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: box.x,
+                      top: box.y,
+                      width: box.width,
+                      height: box.height,
+                      border: isSelected ? "3px solid #111" : "2px solid #fff",
+                      background: "rgba(0,0,0,0.12)",
+                      boxShadow: isSelected ? "0 0 0 1px white inset" : "0 0 0 1px black inset",
+                      cursor: "move",
+                    }}
+                  >
+                    <div className="absolute -top-7 left-0 bg-black text-white text-xs px-2 py-1 rounded-xl whitespace-nowrap">
+                      {box.label}
+                    </div>
+                    {isSelected && renderHandles(box)}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+
+    <div className="space-y-6">
+      <div className="bg-white rounded-3xl shadow-sm p-4 md:p-5">
+        <h2 className="text-xl font-semibold mb-3">Selected Box</h2>
+        {!selectedBox ? (
+          <p className="text-sm text-neutral-500">Select or draw a box to inspect it.</p>
+        ) : (
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-sm font-medium">Label</span>
+              <input
+                className="mt-1 w-full border rounded-2xl px-3 py-2"
+                value={selectedBox.label}
+                onChange={(e) => updateLabel(selectedBox.id, e.target.value)}
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="border rounded-2xl p-3"><strong>X:</strong> {Math.round(selectedBox.x * scaleX)}</div>
+              <div className="border rounded-2xl p-3"><strong>Y:</strong> {Math.round(selectedBox.y * scaleY)}</div>
+              <div className="border rounded-2xl p-3"><strong>W:</strong> {Math.round(selectedBox.width * scaleX)}</div>
+              <div className="border rounded-2xl p-3"><strong>H:</strong> {Math.round(selectedBox.height * scaleY)}</div>
+            </div>
+            <div className="text-sm text-neutral-700 border rounded-2xl p-3 space-y-1">
+              <div><strong>Normalized [x, y, x2, y2]:</strong></div>
+              <code className="block break-all">
+                [
+                {fmt((selectedBox.x * scaleX) / naturalSize.width || 0, 6)}, {fmt((selectedBox.y * scaleY) / naturalSize.height || 0, 6)}, {fmt(((selectedBox.x + selectedBox.width) * scaleX) / naturalSize.width || 0, 6)}, {fmt(((selectedBox.y + selectedBox.height) * scaleY) / naturalSize.height || 0, 6)}
+                ]
+              </code>
+            </div>
+            <div className="text-sm text-neutral-700 border rounded-2xl p-3 space-y-1">
+              <div><strong>Thousandths [x, y, x2, y2]:</strong></div>
+              <code className="block break-all">
+                [
+                {Math.round((((selectedBox.x * scaleX) / naturalSize.width) || 0) * 1000)}, {Math.round((((selectedBox.y * scaleY) / naturalSize.height) || 0) * 1000)}, {Math.round(((((selectedBox.x + selectedBox.width) * scaleX) / naturalSize.width) || 0) * 1000)}, {Math.round(((((selectedBox.y + selectedBox.height) * scaleY) / naturalSize.height) || 0) * 1000)}
+                ]
+              </code>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-3xl shadow-sm p-4 md:p-5">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <h2 className="text-xl font-semibold">Export</h2>
+          <button onClick={copyExport} className="px-4 py-2 rounded-2xl bg-black text-white">
+            {copied ? "Copied" : "Copy JSON"}
+          </button>
+        </div>
+        <textarea
+          readOnly
+          value={exportData}
+          className="w-full h-[420px] border rounded-2xl p-3 font-mono text-xs bg-neutral-50"
+        />
+      </div>
+    </div>
+  </div>
+</div>
+
+); }
