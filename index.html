@@ -1,142 +1,625 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Crop Tool</title>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  />
+  <title>Crop Box Tool</title>
   <style>
-    body { font-family: Arial; margin: 0; padding: 10px; background:#f5f5f5; }
-    #canvasWrapper { position: relative; display:inline-block; }
-    canvas { border:2px solid #333; max-width:100%; }
-    .controls { margin-bottom:10px; }
-    textarea { width:100%; height:200px; }
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      color: #111;
+    }
+
+    .app {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 12px;
+    }
+
+    .panel {
+      background: #fff;
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      margin-bottom: 12px;
+    }
+
+    h1, h2 {
+      margin: 0 0 10px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    button, input, select {
+      font-size: 16px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: #111;
+      color: #fff;
+      border-color: #111;
+    }
+
+    .stage-wrap {
+      overflow: auto;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #e9e9e9;
+      touch-action: none;
+    }
+
+    canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .meta {
+      font-size: 14px;
+      color: #444;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 260px;
+      border: 1px solid #ccc;
+      border-radius: 12px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    @media (min-width: 980px) {
+      .row {
+        grid-template-columns: 1.2fr 0.8fr;
+      }
+    }
+
+    .selected-info {
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      background: #fafafa;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 10px;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #555;
+      margin-top: 8px;
+    }
+
+    .file-label {
+      display: inline-flex;
+      align-items: center;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #111;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .file-label input {
+      display: none;
+    }
   </style>
 </head>
 <body>
+  <div class="app">
+    <div class="row">
+      <div class="panel">
+        <h1>Crop Box Tool</h1>
 
-<div class="controls">
-  <input type="file" id="upload">
-  <button onclick="clearBoxes()">Clear</button>
-  <button onclick="copyData()">Copy JSON</button>
-</div>
+        <div class="controls">
+          <label class="file-label">
+            Upload Image
+            <input type="file" id="upload" accept="image/*" />
+          </label>
 
-<div id="canvasWrapper">
-  <canvas id="canvas"></canvas>
-</div>
+          <button id="modeBtn">Mode: Draw</button>
+          <button id="deleteBtn">Delete Selected</button>
+          <button id="clearBtn">Clear All</button>
+          <button id="copyBtn" class="primary">Copy JSON</button>
+        </div>
 
-<h3>Output</h3>
-<textarea id="output"></textarea>
+        <div class="meta">
+          <div><strong>Image:</strong> <span id="imageName">None</span></div>
+          <div><strong>Natural:</strong> <span id="imageSize">0 × 0</span></div>
+          <div><strong>Boxes:</strong> <span id="boxCount">0</span></div>
+        </div>
 
-<script>
-let canvas = document.getElementById("canvas");
-let ctx = canvas.getContext("2d");
+        <div class="stage-wrap">
+          <canvas id="canvas"></canvas>
+        </div>
 
-let img = new Image();
-let boxes = [];
-let start = null;
-let drawing = false;
+        <div class="hint">
+          Draw mode: drag to create a box. Select mode: tap a box to select it.
+          Desktop and mobile both use touch/pointer input.
+        </div>
+      </div>
 
-document.getElementById("upload").onchange = e => {
-  let file = e.target.files[0];
-  let reader = new FileReader();
-  reader.onload = () => {
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
+      <div>
+        <div class="panel">
+          <h2>Selected Box</h2>
+          <div id="selectedInfo" class="selected-info">No box selected.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Export</h2>
+          <textarea id="output" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const upload = document.getElementById("upload");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const output = document.getElementById("output");
+    const modeBtn = document.getElementById("modeBtn");
+    const deleteBtn = document.getElementById("deleteBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const copyBtn = document.getElementById("copyBtn");
+    const imageNameEl = document.getElementById("imageName");
+    const imageSizeEl = document.getElementById("imageSize");
+    const boxCountEl = document.getElementById("boxCount");
+    const selectedInfoEl = document.getElementById("selectedInfo");
+
+    const img = new Image();
+
+    let boxes = [];
+    let selectedId = null;
+    let mode = "draw";
+    let drag = null;
+    let nextId = 1;
+
+    const HANDLE_SIZE = 18;
+    const MIN_SIZE = 8;
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function round(n, d = 6) {
+      return Number(n || 0).toFixed(d);
+    }
+
+    function getPointerPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: clamp((e.clientX - rect.left) * scaleX, 0, canvas.width),
+        y: clamp((e.clientY - rect.top) * scaleY, 0, canvas.height),
+      };
+    }
+
+    function normalizeBox(x1, y1, x2, y2) {
+      const left = Math.min(x1, x2);
+      const top = Math.min(y1, y2);
+      const right = Math.max(x1, x2);
+      const bottom = Math.max(y1, y2);
+      return {
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
+      };
+    }
+
+    function hitBox(x, y) {
+      for (let i = boxes.length - 1; i >= 0; i--) {
+        const b = boxes[i];
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+          return b;
+        }
+      }
+      return null;
+    }
+
+    function getHandles(box) {
+      const x1 = box.x;
+      const y1 = box.y;
+      const x2 = box.x + box.w;
+      const y2 = box.y + box.h;
+      const xm = box.x + box.w / 2;
+      const ym = box.y + box.h / 2;
+
+      return [
+        { name: "nw", x: x1, y: y1 },
+        { name: "n",  x: xm, y: y1 },
+        { name: "ne", x: x2, y: y1 },
+        { name: "e",  x: x2, y: ym },
+        { name: "se", x: x2, y: y2 },
+        { name: "s",  x: xm, y: y2 },
+        { name: "sw", x: x1, y: y2 },
+        { name: "w",  x: x1, y: ym },
+      ];
+    }
+
+    function hitHandle(box, x, y) {
+      const hs = HANDLE_SIZE;
+      for (const h of getHandles(box)) {
+        if (
+          x >= h.x - hs &&
+          x <= h.x + hs &&
+          y >= h.y - hs &&
+          y <= h.y + hs
+        ) {
+          return h.name;
+        }
+      }
+      return null;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (img.src) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = "#ddd";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      boxes.forEach((b) => {
+        const selected = b.id === selectedId;
+
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+
+        ctx.lineWidth = selected ? 3 : 2;
+        ctx.strokeStyle = selected ? "#111" : "#fff";
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+
+        ctx.strokeStyle = selected ? "#fff" : "#111";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+
+        const label = b.label || `box_${b.id}`;
+        ctx.font = "14px Arial";
+        const textW = ctx.measureText(label).width + 12;
+        ctx.fillStyle = "#111";
+        ctx.fillRect(b.x, Math.max(0, b.y - 26), textW, 22);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, b.x + 6, Math.max(15, b.y - 10));
+
+        if (selected) {
+          for (const h of getHandles(b)) {
+            ctx.fillStyle = "#fff";
+            ctx.strokeStyle = "#111";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(h.x, h.y, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      });
+    }
+
+    function updateMeta() {
+      imageNameEl.textContent = img.dataset.fileName || "None";
+      imageSizeEl.textContent = `${img.naturalWidth || 0} × ${img.naturalHeight || 0}`;
+      boxCountEl.textContent = boxes.length;
+    }
+
+    function getExportData() {
+      return {
+        image: {
+          name: img.dataset.fileName || "",
+          naturalWidth: img.naturalWidth || 0,
+          naturalHeight: img.naturalHeight || 0
+        },
+        boxes: boxes.map((b) => {
+          const x = b.x;
+          const y = b.y;
+          const w = b.w;
+          const h = b.h;
+          const x2 = x + w;
+          const y2 = y + h;
+
+          const nx = x / canvas.width;
+          const ny = y / canvas.height;
+          const nw = w / canvas.width;
+          const nh = h / canvas.height;
+          const nx2 = x2 / canvas.width;
+          const ny2 = y2 / canvas.height;
+
+          return {
+            id: b.id,
+            label: b.label,
+            pixels: {
+              x: Math.round(x),
+              y: Math.round(y),
+              width: Math.round(w),
+              height: Math.round(h),
+              x2: Math.round(x2),
+              y2: Math.round(y2)
+            },
+            normalized: {
+              x: Number(nx.toFixed(6)),
+              y: Number(ny.toFixed(6)),
+              width: Number(nw.toFixed(6)),
+              height: Number(nh.toFixed(6)),
+              x2: Number(nx2.toFixed(6)),
+              y2: Number(ny2.toFixed(6))
+            },
+            thousandths: {
+              x: Math.round(nx * 1000),
+              y: Math.round(ny * 1000),
+              width: Math.round(nw * 1000),
+              height: Math.round(nh * 1000),
+              x2: Math.round(nx2 * 1000),
+              y2: Math.round(ny2 * 1000)
+            },
+            cssLike: [
+              Number(nx.toFixed(6)),
+              Number(ny.toFixed(6)),
+              Number(nx2.toFixed(6)),
+              Number(ny2.toFixed(6))
+            ]
+          };
+        })
+      };
+    }
+
+    function updateOutput() {
+      output.value = JSON.stringify(getExportData(), null, 2);
+    }
+
+    function updateSelectedInfo() {
+      const b = boxes.find(box => box.id === selectedId);
+      if (!b) {
+        selectedInfoEl.textContent = "No box selected.";
+        return;
+      }
+
+      const x = b.x;
+      const y = b.y;
+      const x2 = b.x + b.w;
+      const y2 = b.y + b.h;
+
+      selectedInfoEl.textContent =
+`Label: ${b.label}
+Pixels [x, y, x2, y2]:
+[${Math.round(x)}, ${Math.round(y)}, ${Math.round(x2)}, ${Math.round(y2)}]
+
+Normalized [x, y, x2, y2]:
+[${round(x / canvas.width)}, ${round(y / canvas.height)}, ${round(x2 / canvas.width)}, ${round(y2 / canvas.height)}]
+
+Thousandths [x, y, x2, y2]:
+[${Math.round((x / canvas.width) * 1000)}, ${Math.round((y / canvas.height) * 1000)}, ${Math.round((x2 / canvas.width) * 1000)}, ${Math.round((y2 / canvas.height) * 1000)}]`;
+    }
+
+    function refreshAll() {
       draw();
-    };
-    img.src = reader.result;
-  };
-  reader.readAsDataURL(file);
-};
+      updateMeta();
+      updateOutput();
+      updateSelectedInfo();
+    }
 
-canvas.addEventListener("mousedown", e => {
-  start = getMouse(e);
-  drawing = true;
-});
+    upload.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
 
-canvas.addEventListener("mousemove", e => {
-  if (!drawing) return;
-  let current = getMouse(e);
-  draw();
-  drawBox(start, current);
-});
+      const reader = new FileReader();
+      reader.onload = () => {
+        img.onload = () => {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          boxes = [];
+          selectedId = null;
+          nextId = 1;
+          refreshAll();
+        };
+        img.dataset.fileName = file.name;
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
 
-canvas.addEventListener("mouseup", e => {
-  drawing = false;
-  let end = getMouse(e);
+    modeBtn.addEventListener("click", () => {
+      mode = mode === "draw" ? "select" : "draw";
+      modeBtn.textContent = `Mode: ${mode === "draw" ? "Draw" : "Select"}`;
+    });
 
-  let box = normalize(start, end);
-  boxes.push(box);
+    deleteBtn.addEventListener("click", () => {
+      if (selectedId == null) return;
+      boxes = boxes.filter(b => b.id !== selectedId);
+      selectedId = null;
+      refreshAll();
+    });
 
-  updateOutput();
-  draw();
-});
+    clearBtn.addEventListener("click", () => {
+      boxes = [];
+      selectedId = null;
+      refreshAll();
+    });
 
-function getMouse(e){
-  let rect = canvas.getBoundingClientRect();
-  return {
-    x: (e.clientX - rect.left),
-    y: (e.clientY - rect.top)
-  };
-}
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(output.value);
+        copyBtn.textContent = "Copied";
+        setTimeout(() => {
+          copyBtn.textContent = "Copy JSON";
+        }, 1000);
+      } catch (err) {
+        alert("Copy failed on this browser.");
+      }
+    });
 
-function normalize(a,b){
-  return {
-    x: Math.min(a.x,b.x),
-    y: Math.min(a.y,b.y),
-    w: Math.abs(a.x-b.x),
-    h: Math.abs(a.y-b.y)
-  };
-}
+    canvas.addEventListener("pointerdown", (e) => {
+      if (!img.src) return;
 
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(img,0,0);
+      canvas.setPointerCapture(e.pointerId);
+      const p = getPointerPos(e);
 
-  boxes.forEach(b => drawBox({x:b.x,y:b.y},{x:b.x+b.w,y:b.y+b.h}));
-}
+      const hit = hitBox(p.x, p.y);
 
-function drawBox(a,b){
-  ctx.strokeStyle = "red";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);
-}
+      if (mode === "draw") {
+        const id = nextId++;
+        const box = {
+          id,
+          label: `box_${id}`,
+          x: p.x,
+          y: p.y,
+          w: 0,
+          h: 0
+        };
+        boxes.push(box);
+        selectedId = id;
+        drag = {
+          type: "draw",
+          id,
+          startX: p.x,
+          startY: p.y
+        };
+        refreshAll();
+        return;
+      }
 
-function updateOutput(){
-  let data = boxes.map((b,i)=>{
-    let x1 = b.x / canvas.width;
-    let y1 = b.y / canvas.height;
-    let x2 = (b.x+b.w)/canvas.width;
-    let y2 = (b.y+b.h)/canvas.height;
+      if (hit) {
+        selectedId = hit.id;
 
-    return {
-      slot: i+1,
-      normalized: [x1,y1,x2,y2],
-      thousandths: [
-        Math.round(x1*1000),
-        Math.round(y1*1000),
-        Math.round(x2*1000),
-        Math.round(y2*1000)
-      ]
-    };
-  });
+        const handle = hitHandle(hit, p.x, p.y);
+        if (handle) {
+          drag = {
+            type: "resize",
+            id: hit.id,
+            handle,
+            startBox: { ...hit }
+          };
+        } else {
+          drag = {
+            type: "move",
+            id: hit.id,
+            offsetX: p.x - hit.x,
+            offsetY: p.y - hit.y
+          };
+        }
+      } else {
+        selectedId = null;
+        drag = null;
+      }
 
-  document.getElementById("output").value =
-    JSON.stringify(data,null,2);
-}
+      refreshAll();
+    });
 
-function clearBoxes(){
-  boxes = [];
-  draw();
-  updateOutput();
-}
+    canvas.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const p = getPointerPos(e);
+      const box = boxes.find(b => b.id === drag.id);
+      if (!box) return;
 
-function copyData(){
-  navigator.clipboard.writeText(
-    document.getElementById("output").value
-  );
-}
-</script>
+      if (drag.type === "draw") {
+        const n = normalizeBox(drag.startX, drag.startY, p.x, p.y);
+        box.x = n.x;
+        box.y = n.y;
+        box.w = n.w;
+        box.h = n.h;
+      }
 
+      if (drag.type === "move") {
+        box.x = clamp(p.x - drag.offsetX, 0, canvas.width - box.w);
+        box.y = clamp(p.y - drag.offsetY, 0, canvas.height - box.h);
+      }
+
+      if (drag.type === "resize") {
+        const sb = drag.startBox;
+        let left = sb.x;
+        let top = sb.y;
+        let right = sb.x + sb.w;
+        let bottom = sb.y + sb.h;
+
+        if (drag.handle.includes("w")) left = clamp(p.x, 0, right - MIN_SIZE);
+        if (drag.handle.includes("e")) right = clamp(p.x, left + MIN_SIZE, canvas.width);
+        if (drag.handle.includes("n")) top = clamp(p.y, 0, bottom - MIN_SIZE);
+        if (drag.handle.includes("s")) bottom = clamp(p.y, top + MIN_SIZE, canvas.height);
+
+        box.x = left;
+        box.y = top;
+        box.w = right - left;
+        box.h = bottom - top;
+      }
+
+      refreshAll();
+    });
+
+    function finishDrag() {
+      if (!drag) return;
+
+      if (drag.type === "draw") {
+        const box = boxes.find(b => b.id === drag.id);
+        if (box && (box.w < MIN_SIZE || box.h < MIN_SIZE)) {
+          boxes = boxes.filter(b => b.id !== drag.id);
+          if (selectedId === drag.id) selectedId = null;
+        } else if (box) {
+          const newLabel = prompt("Label for this box:", box.label);
+          if (newLabel !== null && newLabel.trim() !== "") {
+            box.label = newLabel.trim();
+          }
+        }
+      }
+
+      drag = null;
+      refreshAll();
+    }
+
+    canvas.addEventListener("pointerup", finishDrag);
+    canvas.addEventListener("pointercancel", finishDrag);
+    canvas.addEventListener("pointerleave", (e) => {
+      if (drag && e.buttons === 0) finishDrag();
+    });
+
+    canvas.width = 900;
+    canvas.height = 600;
+    ctx.fillStyle = "#ddd";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#666";
+    ctx.font = "24px Arial";
+    ctx.fillText("Upload an image to begin", 30, 50);
+    updateMeta();
+    updateOutput();
+    updateSelectedInfo();
+  </script>
 </body>
 </html>
